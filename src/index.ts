@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Api, AssistantMessage, Model, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { fingerprint, readCache, writeCache } from "./cache.js";
+import { fingerprint, isCacheValid, readCache, writeCache } from "./cache.js";
 import { setupLiteLLMCostTracking } from "./cost.js";
 import {
   discoverModels,
@@ -767,12 +767,20 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     }
     const result = await discoverModels(fresh.baseUrl, fresh.apiKey, { timeoutMs: getDiscoveryTimeoutMs() });
     const now = Date.now();
+    let supportsSkills: boolean | undefined;
+    try {
+      const skills = await listSkills(fresh.baseUrl, fresh.apiKey);
+      supportsSkills = skills.length > 0 || true;
+    } catch {
+      supportsSkills = false;
+    }
     await writeCache(getCachePath(), {
       baseUrl: fresh.baseUrl,
       apiKeyFingerprint: freshFp,
       fetchedAt: now,
       source: result.source,
       models: result.models,
+      supportsSkills,
     });
     const overridden = await applyOverrides(result.models);
     registerProvider(fresh.baseUrl, overridden, fresh.apiKeyConfig);
@@ -875,6 +883,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if (discoveryDisabledReason()) return;
     const fresh = await resolveCredentials();
     if (!fresh.baseUrl || !fresh.apiKey) return;
+    const cache = await readCache(getCachePath());
+    if (isCacheValid(cache, fresh.baseUrl, fresh.apiKey) && cache?.supportsSkills === false) return;
     const skills = await listSkills(fresh.baseUrl, fresh.apiKey);
     const section = createSkillsPromptSection(skills);
     if (!section) return;

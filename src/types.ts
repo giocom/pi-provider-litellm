@@ -8,6 +8,7 @@ export interface CacheFile {
   fetchedAt: number;
   source: DiscoverySource;
   models: ProviderModelConfig[];
+  supportsSkills?: boolean;
 }
 
 export interface DiscoveryResult {
