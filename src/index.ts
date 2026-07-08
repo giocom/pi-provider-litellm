@@ -882,7 +882,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if (ctx.model?.provider !== PROVIDER_NAME) return;
     if (typeof event.payload !== "object" || event.payload === null) return;
     const payload = event.payload as Record<string, unknown>;
-    if (payload.thinking !== undefined || payload.reasoning !== undefined || payload.reasoning_effort !== undefined) {
+    if (payload.thinking !== undefined || payload.reasoning !== undefined) {
       return prepareLiteLLMRequestPayload(payload, ctx.model?.id, sessionId);
     }
     const thinkingBudgets: Record<string, number> = {
