@@ -908,6 +908,19 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     return prepareLiteLLMRequestPayload(payload, ctx.model?.id, sessionId);
   });
 
+  pi.on("turn_end", (_event, ctx) => {
+    if ("getContextUsage" in ctx) {
+      const getUsage = (ctx as unknown as Record<string, unknown>).getContextUsage as () => { percent: number | null };
+      if (typeof getUsage === "function") {
+        const usage = getUsage();
+        if (usage && usage.percent && usage.percent > 85) {
+          const compact = (ctx as unknown as Record<string, unknown>).compact as (() => void) | undefined;
+          if (typeof compact === "function") compact();
+        }
+      }
+    }
+  });
+
   pi.on("before_agent_start", async (event) => {
     if (discoveryDisabledReason()) return;
     const fresh = await resolveCredentials();
