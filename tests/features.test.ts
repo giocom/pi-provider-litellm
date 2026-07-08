@@ -355,7 +355,7 @@ describe("feature parity", () => {
       extra_body: {
         chat_template_kwargs: { enable_thinking: false, preserve_thinking: true },
         reasoning: false,
-        "reasoning-budget": 0,
+        thinking_budget_tokens: 0,
       },
       include_reasoning: false,
       reasoning_content: false,

@@ -894,10 +894,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     const extraBody = (payload.extra_body as Record<string, unknown>) ?? {};
     if (currentThinkingLevel === "off") {
       extraBody.reasoning = false;
-      extraBody["reasoning-budget"] = 0;
+      extraBody.thinking_budget_tokens = 0;
     } else if (thinkingBudgets[currentThinkingLevel]) {
       extraBody.reasoning = true;
-      extraBody["reasoning-budget"] = thinkingBudgets[currentThinkingLevel];
+      extraBody.thinking_budget_tokens = thinkingBudgets[currentThinkingLevel];
     }
     extraBody.chat_template_kwargs = {
       ...(extraBody.chat_template_kwargs as Record<string, unknown> ?? {}),
