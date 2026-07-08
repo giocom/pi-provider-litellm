@@ -873,10 +873,39 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     void runRefresh().catch(() => undefined);
   });
 
+  let currentThinkingLevel = "off";
+  pi.on("thinking_level_select", (event) => {
+    currentThinkingLevel = event.level;
+  });
+
   pi.on("before_provider_request", (event, ctx) => {
     if (ctx.model?.provider !== PROVIDER_NAME) return;
     if (typeof event.payload !== "object" || event.payload === null) return;
-    return prepareLiteLLMRequestPayload(event.payload as Record<string, unknown>, ctx.model?.id, sessionId);
+    const payload = event.payload as Record<string, unknown>;
+    if (payload.thinking !== undefined || payload.reasoning !== undefined || payload.reasoning_effort !== undefined) {
+      return prepareLiteLLMRequestPayload(payload, ctx.model?.id, sessionId);
+    }
+    const thinkingBudgets: Record<string, number> = {
+      minimal: 512,
+      low: 1024,
+      medium: 4096,
+      high: 8192,
+    };
+    const extraBody = (payload.extra_body as Record<string, unknown>) ?? {};
+    if (currentThinkingLevel === "off") {
+      extraBody.reasoning = false;
+      extraBody["reasoning-budget"] = 0;
+    } else if (thinkingBudgets[currentThinkingLevel]) {
+      extraBody.reasoning = true;
+      extraBody["reasoning-budget"] = thinkingBudgets[currentThinkingLevel];
+    }
+    extraBody.chat_template_kwargs = {
+      ...(extraBody.chat_template_kwargs as Record<string, unknown> ?? {}),
+      enable_thinking: currentThinkingLevel !== "off",
+      preserve_thinking: true,
+    };
+    payload.extra_body = extraBody;
+    return prepareLiteLLMRequestPayload(payload, ctx.model?.id, sessionId);
   });
 
   pi.on("before_agent_start", async (event) => {

@@ -266,7 +266,7 @@ function mapFromModelInfo(entry: ModelInfoEntry): ProviderModelConfig | undefine
     input: info.supports_vision ? ["text", "image"] : ["text"],
     cost: mapModelInfoCost(info, catalogModel?.cost),
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
-    maxTokens: info.max_output_tokens ?? DEFAULT_MAX_TOKENS,
+    maxTokens: info.max_output_tokens ?? info.max_tokens ?? DEFAULT_MAX_TOKENS,
     compat: buildCompat(id),
   };
 }
@@ -287,7 +287,7 @@ function mapFromHealthModelInfo(
     input: info.supports_vision ? ["text", "image"] : ["text"],
     cost: mapModelInfoCost(info, catalogModel?.cost),
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
-    maxTokens: info.max_output_tokens ?? DEFAULT_MAX_TOKENS,
+    maxTokens: info.max_output_tokens ?? info.max_tokens ?? DEFAULT_MAX_TOKENS,
     compat: buildCompat(fallbackId),
   };
 }

@@ -352,6 +352,11 @@ describe("feature parity", () => {
     const updated = beforeRequest?.({ payload: { messages: [] } }, { model: { provider: "litellm", id: "kimi-k2.6" } });
     expect(updated).toEqual({
       messages: [],
+      extra_body: {
+        chat_template_kwargs: { enable_thinking: false, preserve_thinking: true },
+        reasoning: false,
+        "reasoning-budget": 0,
+      },
       include_reasoning: false,
       reasoning_content: false,
       merge_reasoning_content_in_choices: true,

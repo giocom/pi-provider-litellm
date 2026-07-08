@@ -31,6 +31,7 @@ export interface ModelInfoEntry {
     cache_creation_input_token_cost?: number;
     max_input_tokens?: number;
     max_output_tokens?: number;
+    max_tokens?: number;
     supports_reasoning?: boolean;
     supports_vision?: boolean;
   };
