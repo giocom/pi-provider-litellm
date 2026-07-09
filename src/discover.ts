@@ -5,6 +5,7 @@ import type {
   DiscoveryOptions,
   DiscoveryResult,
   HealthResponse,
+  LiteLLMModelConfig,
   ModelInfoEntry,
   ModelInfoResponse,
   ModelsListEntry,
@@ -253,12 +254,13 @@ function mapModelsDevMetadata(model: ModelsDevModel | undefined): Partial<Provid
   return metadata;
 }
 
-function mapFromModelInfo(entry: ModelInfoEntry): ProviderModelConfig | undefined {
+function mapFromModelInfo(entry: ModelInfoEntry): LiteLLMModelConfig | undefined {
   const id = entry.model_name;
   if (!id) return undefined;
   const info = entry.model_info ?? {};
   if (info.mode && info.mode !== "chat") return undefined;
   const catalogModel = findCatalogModel(id);
+  const extraBody = entry.litellm_params?.extra_body;
   return {
     id,
     name: id,
@@ -268,18 +270,17 @@ function mapFromModelInfo(entry: ModelInfoEntry): ProviderModelConfig | undefine
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
     maxTokens: info.max_output_tokens ?? info.max_tokens ?? DEFAULT_MAX_TOKENS,
     compat: buildCompat(id),
+    ...(extraBody && Object.keys(extraBody).length > 0 ? { extraBody } : {}),
   };
 }
 
-function mapFromHealthModelInfo(
-  entry: ModelInfoEntry,
-  fallbackId: string | undefined,
-): ProviderModelConfig | undefined {
+function mapFromHealthModelInfo(entry: ModelInfoEntry, fallbackId: string | undefined): LiteLLMModelConfig | undefined {
   const model = mapFromModelInfo(entry);
   if (model || !fallbackId) return model;
   if (entry.model_info?.mode && entry.model_info.mode !== "chat") return undefined;
   const info = entry.model_info ?? {};
   const catalogModel = findCatalogModel(fallbackId);
+  const extraBody = entry.litellm_params?.extra_body;
   return {
     id: fallbackId,
     name: fallbackId,
@@ -289,6 +290,7 @@ function mapFromHealthModelInfo(
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
     maxTokens: info.max_output_tokens ?? info.max_tokens ?? DEFAULT_MAX_TOKENS,
     compat: buildCompat(fallbackId),
+    ...(extraBody && Object.keys(extraBody).length > 0 ? { extraBody } : {}),
   };
 }
 
@@ -334,7 +336,7 @@ async function discoverFromHealth(
   base: string,
   apiKey: string,
   options: DiscoveryOptions,
-): Promise<ProviderModelConfig[]> {
+): Promise<LiteLLMModelConfig[]> {
   const healthResult = await fetchJson<HealthResponse>(`${base}/health`, apiKey, options);
   if (!healthResult.ok) return [];
   const endpoints = (healthResult.data.healthy_endpoints ?? []).filter((entry) => entry.model || entry.model_id);
@@ -351,7 +353,7 @@ async function discoverFromHealth(
       return entry ? mapFromHealthModelInfo(entry, endpoint.model) : mapFromHealthEndpoint(endpoint);
     }),
   );
-  return models.filter((model): model is ProviderModelConfig => model !== undefined);
+  return models.filter((model): model is LiteLLMModelConfig => model !== undefined);
 }
 
 export async function discoverModels(
@@ -364,7 +366,7 @@ export async function discoverModels(
   if (infoResult.ok) {
     const models = (infoResult.data.data ?? [])
       .map(mapFromModelInfo)
-      .filter((m): m is ProviderModelConfig => m !== undefined);
+      .filter((m): m is LiteLLMModelConfig => m !== undefined);
     return { source: "model_info", models };
   }
   if (![401, 403, 404].includes(infoResult.status)) {
@@ -381,6 +383,6 @@ export async function discoverModels(
   const modelsDev = await getModelsDevCatalog(options);
   const models = (listResult.data.data ?? [])
     .map((entry) => mapFromModelsList(entry, modelsDev))
-    .filter((m): m is ProviderModelConfig => m !== undefined);
+    .filter((m): m is LiteLLMModelConfig => m !== undefined);
   return { source: "models_list", models };
 }

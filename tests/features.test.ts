@@ -364,6 +364,52 @@ describe("feature parity", () => {
     });
   });
 
+  it("merges cached extra_body with thinking params in before_provider_request", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "llama.cpp/qwen3-30b",
+              litellm_params: {
+                extra_body: {
+                  reasoning: true,
+                  thinking_budget_tokens: 2048,
+                  custom_param: "from-litellm-config",
+                },
+              },
+              model_info: { mode: "chat" },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const payload = { messages: [], extra_body: { custom_param: "from-user-request" } };
+    beforeRequest?.({ payload }, { model: { provider: "litellm", id: "llama.cpp/qwen3-30b" } });
+
+    expect(payload).toEqual({
+      messages: [],
+      extra_body: {
+        chat_template_kwargs: { enable_thinking: false, preserve_thinking: true },
+        reasoning: false,
+        thinking_budget_tokens: 0,
+        custom_param: "from-user-request",
+      },
+    });
+  });
+
   it("drops reasoning fields for llm-gateway/gpt-5.5 tool requests", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";

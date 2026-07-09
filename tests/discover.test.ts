@@ -181,6 +181,49 @@ describe("discoverModels via /model/info", () => {
     });
   });
 
+  it("parses extra_body from litellm_params in /model/info", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof URL ? input.toString() : String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "llama.cpp/qwen3-30b",
+              litellm_params: {
+                extra_body: {
+                  reasoning: true,
+                  thinking_budget_tokens: 2048,
+                  custom_param: "value",
+                },
+              },
+              model_info: { mode: "chat", max_input_tokens: 32768, max_output_tokens: 4096 },
+            },
+            {
+              model_name: "openai/gpt-4o",
+              model_info: { mode: "chat", max_input_tokens: 128000 },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.source).toBe("model_info");
+    expect(result.models).toHaveLength(2);
+
+    const llama = result.models.find((m) => m.id === "llama.cpp/qwen3-30b");
+    expect(llama?.extraBody).toEqual({
+      reasoning: true,
+      thinking_budget_tokens: 2048,
+      custom_param: "value",
+    });
+
+    const openai = result.models.find((m) => m.id === "openai/gpt-4o");
+    expect(openai?.extraBody).toBeUndefined();
+  });
+
   it("uses catalog costs when /model/info omits costs for Anthropic aliases", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = input instanceof URL ? input.toString() : String(input);
