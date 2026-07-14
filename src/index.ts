@@ -784,7 +784,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     let supportsSkills: boolean | undefined;
     try {
       const skills = await listSkills(fresh.baseUrl, fresh.apiKey);
-      supportsSkills = skills.length > 0 || true;
+      supportsSkills = skills.length > 0;
     } catch {
       supportsSkills = false;
     }
