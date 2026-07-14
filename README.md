@@ -7,31 +7,32 @@ Discovers models from a self-hosted LiteLLM proxy and registers them under the `
 ## Install
 
 ```bash
-pi install npm:pi-provider-litellm
+pi install git:github.com/giocom/pi-provider-litellm
 ```
 
-Pi fetches the package from npm and registers it. Add `-l` to install into project settings (`.pi/settings.json`) instead of global.
+Pi clones the repository and registers the extension (entrypoint `./src/index.ts`,
+loaded directly by Pi's TypeScript loader — no build step required). Add `-l` to
+install into project settings (`.pi/settings.json`) instead of global.
 
 To try it without installing (one-off, current run only):
 
 ```bash
-pi -e npm:pi-provider-litellm
+pi -e git:github.com/giocom/pi-provider-litellm
 ```
 
 <details>
-<summary>Alternative: install from source</summary>
-
-The extension entrypoint is `./src/index.ts`, which Pi's TypeScript loader runs
-directly — no build step is required.
+<summary>Alternative: clone and install from source</summary>
 
 ```bash
-git clone https://github.com/balcsida/pi-provider-litellm.git ~/.pi/agent/extensions/pi-provider-litellm
+git clone https://github.com/giocom/pi-provider-litellm.git ~/.pi/agent/extensions/pi-provider-litellm
 cd ~/.pi/agent/extensions/pi-provider-litellm
 npm ci
 ```
 
-If you change source under `src/`, the extension reloads on the next Pi start
-(`pi -e ./src/index.ts` also works for a quick local run).
+The extension entrypoint is `./src/index.ts`, which Pi's TypeScript loader runs
+directly — no build step is required. If you change source under `src/`, the
+extension reloads on the next Pi start (`pi -e ./src/index.ts` also works for a
+quick local run).
 
 </details>
 
