@@ -21,12 +21,17 @@ pi -e npm:pi-provider-litellm
 <details>
 <summary>Alternative: install from source</summary>
 
+The extension entrypoint is `./src/index.ts`, which Pi's TypeScript loader runs
+directly — no build step is required.
+
 ```bash
 git clone https://github.com/balcsida/pi-provider-litellm.git ~/.pi/agent/extensions/pi-provider-litellm
 cd ~/.pi/agent/extensions/pi-provider-litellm
 npm ci
-npm run clean && npm run build
 ```
+
+If you change source under `src/`, the extension reloads on the next Pi start
+(`pi -e ./src/index.ts` also works for a quick local run).
 
 </details>
 
@@ -131,7 +136,7 @@ npm run check
 npm run clean && npm run build
 ```
 
-`npm run check` runs Biome, type checking, and the Vitest suite. Runtime changes must be built before local Pi smoke checks because the extension entrypoint is `./dist/index.js`.
+`npm run check` runs Biome, type checking, and the Vitest suite. The extension entrypoint is `./src/index.ts`, which Pi loads directly via its TypeScript loader — a build step is not required to run the extension. Use `npm run build` only when preparing the npm package or running the non-interactive smoke (which loads `./dist/index.js`).
 
 Before changing package contents or dependency policy, also run:
 
