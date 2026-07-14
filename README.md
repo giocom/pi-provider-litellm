@@ -163,6 +163,8 @@ The model list is cached at `~/.pi/agent/litellm-models.json` with a keyed finge
 
 If the cache is older than 24 hours, the extension refreshes it in the background on session start (non-blocking). Failures are silent — the cached models remain in use. Run `/litellm-refresh` to force an immediate refresh.
 
+The cache also stores a `supportsSkills` flag that is set during the first successful model discovery. If the LiteLLM proxy does not expose `/v1/skills` (or the endpoint returns an error), the extension writes `supportsSkills: false` to the cache and skips skills fetching on subsequent turns. Run `/litellm-refresh` to re-evaluate skills support after upgrading the proxy.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
@@ -176,7 +178,7 @@ If the cache is older than 24 hours, the extension refreshes it in the backgroun
 | Enterprise SSO login shows "virtual key generation failed" | The LiteLLM instance may lack a database (`/key/generate` requires one), your user account may lack key-generation permission, or the request timed out; the JWT is used directly as a fallback |
 | Enterprise SSO token prompt fails with "SSO token is required" | The token field was left empty — paste the token copied from the LiteLLM UI |
 | MCP tools not showing | Verify the proxy exposes `/mcp-rest/tools/list` and run `/litellm-refresh` after fixing the proxy |
-| Skills not affecting prompts | Verify the proxy exposes `/v1/skills` and returns enabled skills |
+| Skills not affecting prompts | Verify the proxy exposes `/v1/skills` and returns enabled skills. If the proxy previously failed this check, the cache may have `supportsSkills: false` — run `/litellm-refresh` to re-evaluate |
 
 ## License
 

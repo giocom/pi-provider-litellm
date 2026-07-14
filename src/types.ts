@@ -2,16 +2,21 @@ import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
 export type DiscoverySource = "model_info" | "models_list" | "health";
 
+export interface LiteLLMModelConfig extends ProviderModelConfig {
+  extraBody?: Record<string, unknown>;
+}
+
 export interface CacheFile {
   baseUrl: string;
   apiKeyFingerprint: string;
   fetchedAt: number;
   source: DiscoverySource;
-  models: ProviderModelConfig[];
+  models: LiteLLMModelConfig[];
+  supportsSkills?: boolean;
 }
 
 export interface DiscoveryResult {
-  models: ProviderModelConfig[];
+  models: LiteLLMModelConfig[];
   source: DiscoverySource;
 }
 
@@ -22,6 +27,9 @@ export interface DiscoveryOptions {
 
 export interface ModelInfoEntry {
   model_name?: string;
+  litellm_params?: {
+    extra_body?: Record<string, unknown>;
+  };
   model_info?: {
     mode?: string;
     input_cost_per_token?: number;
@@ -30,6 +38,7 @@ export interface ModelInfoEntry {
     cache_creation_input_token_cost?: number;
     max_input_tokens?: number;
     max_output_tokens?: number;
+    max_tokens?: number;
     supports_reasoning?: boolean;
     supports_vision?: boolean;
   };

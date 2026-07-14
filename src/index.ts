@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Api, AssistantMessage, Model, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { fingerprint, readCache, writeCache } from "./cache.js";
+import { fingerprint, isCacheValid, readCache, writeCache } from "./cache.js";
 import { setupLiteLLMCostTracking } from "./cost.js";
 import {
   discoverModels,
@@ -22,7 +22,14 @@ import {
 import { getSessionIdFromFile } from "./litellm.js";
 import { createMcpToolDefinitions } from "./mcp-tools.js";
 import { createSkillsPromptSection, createSkillToolDefinitions, listSkills } from "./skills.js";
-import type { AuthFileEntry, CacheFile, DiscoveryOptions, DiscoveryResult, ResolvedCredentials } from "./types.js";
+import type {
+  AuthFileEntry,
+  CacheFile,
+  DiscoveryOptions,
+  DiscoveryResult,
+  LiteLLMModelConfig,
+  ResolvedCredentials,
+} from "./types.js";
 
 const PROVIDER_NAME = "litellm";
 const ENV_BASE_URL = "LITELLM_BASE_URL";
@@ -669,6 +676,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   models = await applyOverrides(models);
 
   let updateCosts: (models: ProviderModelConfig[]) => void = () => undefined;
+  const modelExtraBodies: Record<string, Record<string, unknown>> = {};
 
   const oauth = {
     name: "LiteLLM",
@@ -689,6 +697,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     models: ProviderModelConfig[],
     apiKeyConfig = creds.apiKeyConfig ?? getApiKeyHelperCommand() ?? `$${ENV_API_KEY}`,
   ): void {
+    for (const key of Object.keys(modelExtraBodies)) delete modelExtraBodies[key];
+    for (const model of models as LiteLLMModelConfig[]) {
+      if (model.extraBody && Object.keys(model.extraBody).length > 0) {
+        modelExtraBodies[model.id] = model.extraBody;
+      }
+    }
     pi.registerProvider(PROVIDER_NAME, {
       baseUrl: baseUrl ? `${baseUrl}/v1` : "https://litellm.example.com/v1",
       // When LITELLM_API_KEY_HELPER is set we register the helper as a `!command` provider key.
@@ -767,12 +781,20 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     }
     const result = await discoverModels(fresh.baseUrl, fresh.apiKey, { timeoutMs: getDiscoveryTimeoutMs() });
     const now = Date.now();
+    let supportsSkills: boolean | undefined;
+    try {
+      const skills = await listSkills(fresh.baseUrl, fresh.apiKey);
+      supportsSkills = skills.length > 0;
+    } catch {
+      supportsSkills = false;
+    }
     await writeCache(getCachePath(), {
       baseUrl: fresh.baseUrl,
       apiKeyFingerprint: freshFp,
       fetchedAt: now,
       source: result.source,
       models: result.models,
+      supportsSkills,
     });
     const overridden = await applyOverrides(result.models);
     registerProvider(fresh.baseUrl, overridden, fresh.apiKeyConfig);
@@ -865,16 +887,51 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     void runRefresh().catch(() => undefined);
   });
 
+  let currentThinkingLevel = "off";
+  pi.on("thinking_level_select", (event) => {
+    currentThinkingLevel = event.level;
+  });
+
   pi.on("before_provider_request", (event, ctx) => {
     if (ctx.model?.provider !== PROVIDER_NAME) return;
     if (typeof event.payload !== "object" || event.payload === null) return;
-    return prepareLiteLLMRequestPayload(event.payload as Record<string, unknown>, ctx.model?.id, sessionId);
+    const payload = event.payload as Record<string, unknown>;
+    if (payload.thinking !== undefined || payload.reasoning !== undefined) {
+      return prepareLiteLLMRequestPayload(payload, ctx.model?.id, sessionId);
+    }
+    const thinkingBudgets: Record<string, number> = {
+      minimal: 512,
+      low: 1024,
+      medium: 4096,
+      high: 8192,
+    };
+    const modelExtraBody = modelExtraBodies[ctx.model?.id ?? ""];
+    const payloadExtraBody = (payload.extra_body as Record<string, unknown> | undefined) ?? {};
+    const extraBody: Record<string, unknown> = { ...modelExtraBody, ...payloadExtraBody };
+    if (currentThinkingLevel === "off") {
+      extraBody.reasoning = false;
+      extraBody.thinking_budget_tokens = 0;
+    } else if (thinkingBudgets[currentThinkingLevel]) {
+      extraBody.reasoning = true;
+      extraBody.thinking_budget_tokens = thinkingBudgets[currentThinkingLevel];
+    }
+    extraBody.chat_template_kwargs = {
+      ...((extraBody.chat_template_kwargs ?? modelExtraBody?.chat_template_kwargs) as
+        | Record<string, unknown>
+        | undefined),
+      enable_thinking: currentThinkingLevel !== "off",
+      preserve_thinking: true,
+    };
+    payload.extra_body = extraBody;
+    return prepareLiteLLMRequestPayload(payload, ctx.model?.id, sessionId);
   });
 
   pi.on("before_agent_start", async (event) => {
     if (discoveryDisabledReason()) return;
     const fresh = await resolveCredentials();
     if (!fresh.baseUrl || !fresh.apiKey) return;
+    const cache = await readCache(getCachePath());
+    if (isCacheValid(cache, fresh.baseUrl, fresh.apiKey) && cache?.supportsSkills === false) return;
     const skills = await listSkills(fresh.baseUrl, fresh.apiKey);
     const section = createSkillsPromptSection(skills);
     if (!section) return;

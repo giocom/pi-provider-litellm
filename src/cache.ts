@@ -39,7 +39,8 @@ function isCacheFileShape(value: unknown): value is CacheFile {
     typeof v.apiKeyFingerprint === "string" &&
     typeof v.fetchedAt === "number" &&
     (v.source === "model_info" || v.source === "models_list" || v.source === "health") &&
-    Array.isArray(v.models)
+    Array.isArray(v.models) &&
+    (v.supportsSkills === undefined || typeof v.supportsSkills === "boolean")
   );
 }
 
