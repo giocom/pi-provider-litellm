@@ -1,23 +1,27 @@
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Api, KnownProvider, Model } from "@earendil-works/pi-ai";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
-const _piAiRequire = createRequire(import.meta.url);
-let _getModels: (provider: KnownProvider) => Model<Api>[];
-let _getProviders: () => KnownProvider[];
+// Resolve compat.js via absolute file path (never a bare specifier)
+// to bypass exports-map restrictions — pi-ai may or may not expose ./compat
+// depending on the version bundled with the Pi installation.
+const _require = createRequire(import.meta.url);
+let getModels: (provider: KnownProvider) => Model<Api>[] = () => [];
+let getProviders: () => KnownProvider[] = () => [];
 try {
-  const compat = _piAiRequire("@earendil-works/pi-ai/dist/compat.js") as {
+  const piAiEntry = _require.resolve("@earendil-works/pi-ai");
+  const compatPath = join(dirname(piAiEntry), "compat.js");
+  const compat = _require(compatPath) as {
     getModels: (provider: KnownProvider) => Model<Api>[];
     getProviders: () => KnownProvider[];
   };
-  _getModels = compat.getModels;
-  _getProviders = compat.getProviders;
+  getModels = compat.getModels;
+  getProviders = compat.getProviders;
 } catch {
-  _getModels = () => [];
-  _getProviders = () => [];
+  // Silent fallback: catalog enrichment unavailable (no crash)
 }
-const getModels = _getModels;
-const getProviders = _getProviders;
 import type {
   DiscoveryOptions,
   DiscoveryResult,
