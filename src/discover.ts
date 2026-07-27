@@ -1,6 +1,23 @@
+import { createRequire } from "node:module";
 import type { Api, KnownProvider, Model } from "@earendil-works/pi-ai";
-import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+
+const _piAiRequire = createRequire(import.meta.url);
+let _getModels: (provider: KnownProvider) => Model<Api>[];
+let _getProviders: () => KnownProvider[];
+try {
+  const compat = _piAiRequire("@earendil-works/pi-ai/dist/compat.js") as {
+    getModels: (provider: KnownProvider) => Model<Api>[];
+    getProviders: () => KnownProvider[];
+  };
+  _getModels = compat.getModels;
+  _getProviders = compat.getProviders;
+} catch {
+  _getModels = () => [];
+  _getProviders = () => [];
+}
+const getModels = _getModels;
+const getProviders = _getProviders;
 import type {
   DiscoveryOptions,
   DiscoveryResult,
