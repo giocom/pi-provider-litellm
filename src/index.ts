@@ -1,9 +1,10 @@
+import { createRequire } from "node:module";
 import { execSync, spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import type { Api, AssistantMessage, Model, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
-import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { fingerprint, isCacheValid, readCache, writeCache } from "./cache.js";
 import { setupLiteLLMCostTracking } from "./cost.js";
 import {
@@ -31,6 +32,23 @@ import type {
   ResolvedCredentials,
 } from "./types.js";
 
+// Resolve pi-coding-agent exports via createRequire to work around ESM/CJS
+// interop issues that surface when Pi's loader resolves the package from
+// a git-installed extension context (peer dependency is not always
+// resolvable as named ESM exports).
+const _piRequire = createRequire(import.meta.url);
+let _AuthStorage: { create: (path: string) => { getApiKey: (provider: string, opts?: { includeFallback?: boolean }) => string | undefined } } | undefined;
+let _agentDir: string | undefined;
+try {
+  const mod = _piRequire("@earendil-works/pi-coding-agent") as Record<string, unknown>;
+  _AuthStorage = mod.AuthStorage as typeof _AuthStorage;
+  const g = mod.getAgentDir as (() => string) | undefined;
+  _agentDir = g?.();
+} catch {
+  // Peer dependency not resolvable — extension will fall back to env var
+  // and /login litellm auth paths without crashing.
+}
+
 const PROVIDER_NAME = "litellm";
 const ENV_BASE_URL = "LITELLM_BASE_URL";
 const ENV_API_KEY = "LITELLM_API_KEY";
@@ -56,12 +74,16 @@ type ModelOverride = Partial<
 
 type RefreshResult = { models: ProviderModelConfig[]; source: string };
 
+function piAgentDir(): string {
+  return _agentDir ?? join(homedir(), ".pi", "agent");
+}
+
 function getAuthPath(): string {
-  return join(getAgentDir(), "auth.json");
+  return join(piAgentDir(), "auth.json");
 }
 
 function getCachePath(): string {
-  return join(getAgentDir(), CACHE_FILENAME);
+  return join(piAgentDir(), CACHE_FILENAME);
 }
 
 // Same tolerance as pi core's models.json loader (stripJsonComments in dist/utils/json.js):
@@ -117,7 +139,7 @@ function sanitizeModelOverride(modelId: string, raw: unknown): ModelOverride | u
 async function readModelOverrides(): Promise<Map<string, ModelOverride>> {
   let raw: string;
   try {
-    raw = await readFile(join(getAgentDir(), "models.json"), "utf8");
+    raw = await readFile(join(piAgentDir(), "models.json"), "utf8");
   } catch {
     return new Map();
   }
@@ -299,8 +321,8 @@ async function resolveCredentials({ executeHelpers = true } = {}): Promise<Resol
   const authKey =
     entry?.type === "oauth"
       ? (executeHelpers ? resolveOAuthApiKey(entry) : entry.access).trim()
-      : entry?.type === "api_key"
-        ? (await AuthStorage.create(getAuthPath()).getApiKey(PROVIDER_NAME, { includeFallback: false }))?.trim()
+      : entry?.type === "api_key" && _AuthStorage
+        ? (await _AuthStorage.create(getAuthPath()).getApiKey(PROVIDER_NAME, { includeFallback: false }))?.trim()
         : undefined;
   const gcloudKey = executeHelpers && gcloudCacheKey ? (await getGcloudToken())?.trim() : undefined;
   const helperKey =
