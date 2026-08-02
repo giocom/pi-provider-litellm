@@ -909,7 +909,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     void runRefresh().catch(() => undefined);
   });
 
-  let currentThinkingLevel = "off";
+  let currentThinkingLevel: string | undefined;
   pi.on("thinking_level_select", (event) => {
     currentThinkingLevel = event.level;
   });
@@ -930,18 +930,21 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     const modelExtraBody = modelExtraBodies[ctx.model?.id ?? ""];
     const payloadExtraBody = (payload.extra_body as Record<string, unknown> | undefined) ?? {};
     const extraBody: Record<string, unknown> = { ...modelExtraBody, ...payloadExtraBody };
-    if (currentThinkingLevel === "off") {
+    // Pi restores the saved level without emitting thinking_level_select, so
+    // fall back to the live value until a select event arrives.
+    const thinkingLevel = currentThinkingLevel ?? pi.getThinkingLevel();
+    if (thinkingLevel === "off") {
       extraBody.reasoning = false;
       extraBody.thinking_budget_tokens = 0;
-    } else if (thinkingBudgets[currentThinkingLevel]) {
+    } else if (thinkingBudgets[thinkingLevel]) {
       extraBody.reasoning = true;
-      extraBody.thinking_budget_tokens = thinkingBudgets[currentThinkingLevel];
+      extraBody.thinking_budget_tokens = thinkingBudgets[thinkingLevel];
     }
     extraBody.chat_template_kwargs = {
       ...((extraBody.chat_template_kwargs ?? modelExtraBody?.chat_template_kwargs) as
         | Record<string, unknown>
         | undefined),
-      enable_thinking: currentThinkingLevel !== "off",
+      enable_thinking: thinkingLevel !== "off",
       preserve_thinking: true,
     };
     payload.extra_body = extraBody;

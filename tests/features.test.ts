@@ -28,6 +28,7 @@ type TestPi = {
   registerCommand(name: string, command: TestCommand): void;
   registerTool(tool: { name: string; description: string; execute?: (...args: any[]) => Promise<any> | any }): void;
   on(event: string, handler: (event: any, ctx?: any) => Promise<any> | any): void;
+  getThinkingLevel(): string;
 };
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -82,6 +83,9 @@ function createPi(): TestPi {
     },
     on(event: string, handler: (event: any, ctx?: any) => Promise<any> | any) {
       this.handlers.set(event, [...(this.handlers.get(event) ?? []), handler]);
+    },
+    getThinkingLevel() {
+      return "off";
     },
   };
 }
@@ -407,6 +411,41 @@ describe("feature parity", () => {
         thinking_budget_tokens: 0,
         custom_param: "from-user-request",
       },
+    });
+  });
+
+  it("injects the Pi-restored thinking level without a select event", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "anthropic/claude-3-5-sonnet",
+              model_info: { mode: "chat" },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    pi.getThinkingLevel = () => "minimal";
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const payload: Record<string, unknown> = { messages: [] };
+    beforeRequest?.({ payload }, { model: { provider: "litellm", id: "anthropic/claude-3-5-sonnet" } });
+    expect(payload.extra_body).toEqual({
+      reasoning: true,
+      thinking_budget_tokens: 512,
+      chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
     });
   });
 
