@@ -2,7 +2,7 @@
 
 LiteLLM proxy provider extension for [Pi](https://pi.dev).
 
-Discovers models from a self-hosted LiteLLM proxy and registers them under the `litellm` provider. Supports `/login litellm`, `/litellm-refresh`, LiteLLM MCP tools, LiteLLM Skills Gateway prompt injection, and Google ADC token auth. Tries `/model/info` first (admin endpoint with rich metadata), falls back to `/v1/models` (OpenAI-compatible) on 401/403/404, then tries `/health` plus per-endpoint `/model/info` for older LiteLLM proxies.
+Discovers models from a self-hosted LiteLLM proxy and registers them under the `litellm` provider. Supports `/login litellm`, `/litellm-refresh`, LiteLLM MCP tools, LiteLLM Skills Gateway prompt injection, Google ADC token auth, Pi thinking mode (mapped to LiteLLM reasoning params), `models.json` model overrides, and per-response cost tracking. Tries `/model/info` first (admin endpoint with rich metadata), falls back to `/v1/models` (OpenAI-compatible) on 401/403/404, then tries `/health` plus per-endpoint `/model/info` for older LiteLLM proxies.
 
 ## Install
 
@@ -79,6 +79,20 @@ Stored pi credentials for `litellm` take precedence over `LITELLM_API_KEY`; the 
 ```
 /model
 ```
+
+## Thinking mode
+
+Pi's thinking mode is forwarded to LiteLLM on every request by mapping the selected level onto `extra_body`:
+
+| Pi thinking level | `reasoning` | `thinking_budget_tokens` | `chat_template_kwargs.enable_thinking` |
+|---|---|---|---|
+| off | `false` | `0` | `false` |
+| minimal | `true` | `512` | `true` |
+| low | `true` | `1024` | `true` |
+| medium | `true` | `4096` | `true` |
+| high | `true` | `8192` | `true` |
+
+`chat_template_kwargs.preserve_thinking` is always set to `true`. The mapping is applied on top of any `extra_body` merged from the LiteLLM model config, with request-level `extra_body` taking precedence. When the extension starts, it reads the current level via `pi.getThinkingLevel()` and also follows `thinking_level_select` events, so the level stays in sync whether it was restored from a saved session or changed mid-conversation. Requests that already carry `thinking`/`reasoning` fields are passed through untouched.
 
 ## Optional environment variables
 
@@ -158,6 +172,31 @@ Before tagging a release, keep `package.json` and `package-lock.json` versions i
 
 - `/litellm-refresh` — force re-fetch the model list, ignoring cache
 
+## Model overrides
+
+Discovered model metadata can be overridden per model through `models.json` in the Pi agent directory (`~/.pi/agent/models.json`), using the same schema Pi core applies to built-in providers:
+
+```json
+{
+  "providers": {
+    "litellm": {
+      "modelOverrides": {
+        "llm-gateway/gpt-5.5": {
+          "contextWindow": 272000,
+          "maxTokens": 64000
+        }
+      }
+    }
+  }
+}
+```
+
+Supported fields mirror Pi's `ModelOverrideSchema`: `name`, `reasoning`, `thinkingLevelMap`, `input`, `contextWindow`, `maxTokens`, `headers`, `compat`, and `cost`. Invalid fields for a model are dropped with a warning; an unparseable file is ignored entirely. JSONC (comments/trailing commas) is tolerated. Overrides are re-read whenever models are discovered or refreshed, so edit the file and run `/litellm-refresh` to apply changes.
+
+## Cost tracking
+
+The extension attaches per-message usage costs to assistant messages from the `litellm` provider. When LiteLLM returns an `x-litellm-response-cost` header, that total is used directly. Otherwise the cost is derived from the model's `cost` metadata (input/output/cache read/cache write, per million tokens) multiplied by the reported token counts. Costs are only applied to `litellm` provider responses, so other providers' messages are never affected.
+
 ## Cache
 
 The model list is cached at `~/.pi/agent/litellm-models.json` with a keyed fingerprint of the base URL + API key. Changing either invalidates the cache automatically.
@@ -180,6 +219,7 @@ The cache also stores a `supportsSkills` flag that is set during the first succe
 | Enterprise SSO token prompt fails with "SSO token is required" | The token field was left empty — paste the token copied from the LiteLLM UI |
 | MCP tools not showing | Verify the proxy exposes `/mcp-rest/tools/list` and run `/litellm-refresh` after fixing the proxy |
 | Skills not affecting prompts | Verify the proxy exposes `/v1/skills` and returns enabled skills. If the proxy previously failed this check, the cache may have `supportsSkills: false` — run `/litellm-refresh` to re-evaluate |
+| Thinking requests sent with level `off` right after starting pi | The saved thinking level is restored by Pi without a `thinking_level_select` event, so the extension reads it via `pi.getThinkingLevel()` on startup. If you still see `off`, run `/model` and re-select the level once |
 
 ## License
 
