@@ -16,6 +16,11 @@ const ENV_KEYS = [
 ];
 const ORIGINAL_ENV = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
 
+// The extension resolves pi-coding-agent via createRequire, which fails in vitest
+// (ERR_PACKAGE_PATH_NOT_EXPORTED), so its agent dir falls back to homedir(). Pin $HOME
+// per test to keep cache/auth file I/O inside the test's temp directory.
+const ORIGINAL_HOME = process.env.HOME;
+
 vi.unmock("@earendil-works/pi-coding-agent");
 
 type TestProviderConfig = {
@@ -167,6 +172,7 @@ async function loadExtension(agentDir: string): Promise<(pi: TestPi) => Promise<
 
     return { AuthStorage: TestAuthStorage, defineTool: (tool: unknown) => tool, getAgentDir: () => agentDir };
   });
+  process.env.HOME = agentDir;
   const mod = await import("../src/index.js");
   return mod.default as unknown as (pi: TestPi) => Promise<void>;
 }
@@ -209,6 +215,8 @@ afterEach(() => {
     if (original === undefined) delete process.env[key];
     else process.env[key] = original;
   }
+  if (ORIGINAL_HOME === undefined) delete process.env.HOME;
+  else process.env.HOME = ORIGINAL_HOME;
   vi.restoreAllMocks();
   vi.resetModules();
 });

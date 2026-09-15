@@ -1,8 +1,8 @@
-import { createRequire } from "node:module";
 import { execSync, spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Api, AssistantMessage, Model, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { fingerprint, isCacheValid, readCache, writeCache } from "./cache.js";
@@ -37,7 +37,13 @@ import type {
 // a git-installed extension context (peer dependency is not always
 // resolvable as named ESM exports).
 const _piRequire = createRequire(import.meta.url);
-let _AuthStorage: { create: (path: string) => { getApiKey: (provider: string, opts?: { includeFallback?: boolean }) => string | undefined } } | undefined;
+let _AuthStorage:
+  | {
+      create: (path: string) => {
+        getApiKey: (provider: string, opts?: { includeFallback?: boolean }) => string | undefined;
+      };
+    }
+  | undefined;
 let _agentDir: string | undefined;
 try {
   const mod = _piRequire("@earendil-works/pi-coding-agent") as Record<string, unknown>;
@@ -699,6 +705,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   let updateCosts: (models: ProviderModelConfig[]) => void = () => undefined;
   const modelExtraBodies: Record<string, Record<string, unknown>> = {};
+  const modelHasChatTemplateKwargs: Record<string, boolean> = {};
 
   const oauth = {
     name: "LiteLLM",
@@ -720,9 +727,13 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     apiKeyConfig = creds.apiKeyConfig ?? getApiKeyHelperCommand() ?? `$${ENV_API_KEY}`,
   ): void {
     for (const key of Object.keys(modelExtraBodies)) delete modelExtraBodies[key];
+    for (const key of Object.keys(modelHasChatTemplateKwargs)) delete modelHasChatTemplateKwargs[key];
     for (const model of models as LiteLLMModelConfig[]) {
       if (model.extraBody && Object.keys(model.extraBody).length > 0) {
         modelExtraBodies[model.id] = model.extraBody;
+      }
+      if (model.extraBody?.chat_template_kwargs != null) {
+        modelHasChatTemplateKwargs[model.id] = true;
       }
     }
     pi.registerProvider(PROVIDER_NAME, {
@@ -940,13 +951,17 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       extraBody.reasoning = true;
       extraBody.thinking_budget_tokens = thinkingBudgets[thinkingLevel];
     }
-    extraBody.chat_template_kwargs = {
-      ...((extraBody.chat_template_kwargs ?? modelExtraBody?.chat_template_kwargs) as
+    if (modelHasChatTemplateKwargs[ctx.model?.id ?? ""] ?? false) {
+      // Model config values win; the thinking-level mapping only fills fields the model did not set.
+      const configuredKwargs = (extraBody.chat_template_kwargs ?? modelExtraBody?.chat_template_kwargs) as
         | Record<string, unknown>
-        | undefined),
-      enable_thinking: thinkingLevel !== "off",
-      preserve_thinking: true,
-    };
+        | undefined;
+      extraBody.chat_template_kwargs = {
+        enable_thinking: thinkingLevel !== "off",
+        preserve_thinking: true,
+        ...configuredKwargs,
+      };
+    }
     payload.extra_body = extraBody;
     return prepareLiteLLMRequestPayload(payload, ctx.model?.id, sessionId);
   });

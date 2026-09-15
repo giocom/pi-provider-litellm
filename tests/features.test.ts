@@ -6,6 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.unmock("@earendil-works/pi-coding-agent");
 
+// The extension resolves pi-coding-agent via createRequire, which fails in vitest
+// (ERR_PACKAGE_PATH_NOT_EXPORTED), so its agent dir falls back to homedir(). Pin $HOME
+// per test to keep cache/auth file I/O inside the test's temp directory.
+const ORIGINAL_HOME = process.env.HOME;
+
 type TestProviderConfig = {
   baseUrl?: string;
   apiKey?: string;
@@ -62,6 +67,7 @@ async function loadExtension(agentDir: string): Promise<(pi: TestPi) => Promise<
 
     return { AuthStorage: TestAuthStorage, defineTool: (tool: unknown) => tool, getAgentDir: () => agentDir };
   });
+  process.env.HOME = agentDir;
   const mod = await import("../src/index.js");
   return mod.default as unknown as (pi: TestPi) => Promise<void>;
 }
@@ -98,6 +104,8 @@ afterEach(() => {
   delete process.env.LITELLM_DISCOVERY_TIMEOUT_MS;
   delete process.env.LITELLM_GCLOUD_TOKEN_AUTH;
   delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (ORIGINAL_HOME === undefined) delete process.env.HOME;
+  else process.env.HOME = ORIGINAL_HOME;
 });
 
 describe("feature parity", () => {
@@ -357,7 +365,6 @@ describe("feature parity", () => {
     expect(updated).toEqual({
       messages: [],
       extra_body: {
-        chat_template_kwargs: { enable_thinking: false, preserve_thinking: true },
         reasoning: false,
         thinking_budget_tokens: 0,
       },
@@ -406,11 +413,80 @@ describe("feature parity", () => {
     expect(payload).toEqual({
       messages: [],
       extra_body: {
-        chat_template_kwargs: { enable_thinking: false, preserve_thinking: true },
         reasoning: false,
         thinking_budget_tokens: 0,
         custom_param: "from-user-request",
       },
+    });
+  });
+
+  it("applies chat_template_kwargs only when the model config declares them in extra_body", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "qwen3.8-27b",
+              litellm_params: {
+                extra_body: {
+                  chat_template_kwargs: { reasoning_effort: "low" },
+                },
+              },
+              model_info: { mode: "chat" },
+            },
+            {
+              model_name: "qwen-instruct",
+              litellm_params: {
+                extra_body: {
+                  chat_template_kwargs: { enable_thinking: false, preserve_thinking: false },
+                },
+              },
+              model_info: { mode: "chat" },
+            },
+            {
+              model_name: "plain-model",
+              model_info: { mode: "chat" },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    pi.getThinkingLevel = () => "medium";
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const declared: Record<string, unknown> = { messages: [] };
+    beforeRequest?.({ payload: declared }, { model: { provider: "litellm", id: "qwen3.8-27b" } });
+    // Model config values win over the thinking-level mapping; unset fields get defaults.
+    expect(declared.extra_body).toEqual({
+      reasoning: true,
+      thinking_budget_tokens: 4096,
+      chat_template_kwargs: { enable_thinking: true, preserve_thinking: true, reasoning_effort: "low" },
+    });
+
+    // A model that explicitly opts out keeps its values even with a non-off thinking level.
+    const instruct: Record<string, unknown> = { messages: [] };
+    beforeRequest?.({ payload: instruct }, { model: { provider: "litellm", id: "qwen-instruct" } });
+    expect(instruct.extra_body).toEqual({
+      reasoning: true,
+      thinking_budget_tokens: 4096,
+      chat_template_kwargs: { enable_thinking: false, preserve_thinking: false },
+    });
+
+    const plain: Record<string, unknown> = { messages: [] };
+    beforeRequest?.({ payload: plain }, { model: { provider: "litellm", id: "plain-model" } });
+    expect(plain.extra_body).toEqual({
+      reasoning: true,
+      thinking_budget_tokens: 4096,
     });
   });
 
@@ -445,7 +521,6 @@ describe("feature parity", () => {
     expect(payload.extra_body).toEqual({
       reasoning: true,
       thinking_budget_tokens: 512,
-      chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
     });
   });
 
