@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
+import { describe, expect, it, vi } from "vitest";
+import { buildThinkingLevelMap, discoverModels } from "../src/discover.js";
 import extension from "../src/index.js";
 import type { LiteLLMModelConfig } from "../src/types.js";
 
@@ -497,6 +499,127 @@ describe("reasoning effort mode mapping", () => {
         preserve_thinking: false,
         enable_thinking: true,
       },
+    });
+  });
+
+  describe("buildThinkingLevelMap", () => {
+    it("maps default levels to [off, low, medium, xhigh] in Pi getSupportedThinkingLevels", () => {
+      const map = buildThinkingLevelMap(["low", "medium", "xhigh", "none"]);
+      expect(map).toEqual({
+        off: "none",
+        minimal: null,
+        low: "low",
+        medium: "medium",
+        high: null,
+        xhigh: "xhigh",
+      });
+
+      const model = createModelConfig({
+        id: "test-model-supported",
+        supports_reasoning: true,
+        thinkingLevelMap: map,
+      });
+
+      const supported = getSupportedThinkingLevels(model as any);
+      expect(supported).toEqual(["off", "low", "medium", "xhigh"]);
+    });
+
+    it("maps subset levels without medium to [off, low, xhigh]", () => {
+      const map = buildThinkingLevelMap(["low", "xhigh", "none"]);
+      expect(map).toEqual({
+        off: "none",
+        minimal: null,
+        low: "low",
+        medium: null,
+        high: null,
+        xhigh: "xhigh",
+      });
+
+      const model = createModelConfig({
+        id: "test-model-subset",
+        supports_reasoning: true,
+        thinkingLevelMap: map,
+      });
+
+      const supported = getSupportedThinkingLevels(model as any);
+      expect(supported).toEqual(["off", "low", "xhigh"]);
+    });
+
+    it("maps levels with high to [off, low, medium, high]", () => {
+      const map = buildThinkingLevelMap(["low", "medium", "high", "none"]);
+      expect(map).toEqual({
+        off: "none",
+        minimal: null,
+        low: "low",
+        medium: "medium",
+        high: "high",
+        xhigh: null,
+      });
+
+      const model = createModelConfig({
+        id: "test-model-high",
+        supports_reasoning: true,
+        thinkingLevelMap: map,
+      });
+
+      const supported = getSupportedThinkingLevels(model as any);
+      expect(supported).toEqual(["off", "low", "medium", "high"]);
+    });
+
+    it("disables off if none is not in levels", () => {
+      const map = buildThinkingLevelMap(["low", "medium", "xhigh"]);
+      expect(map).toEqual({
+        off: null,
+        minimal: null,
+        low: "low",
+        medium: "medium",
+        high: null,
+        xhigh: "xhigh",
+      });
+
+      const model = createModelConfig({
+        id: "test-model-always-on",
+        supports_reasoning: true,
+        thinkingLevelMap: map,
+      });
+
+      const supported = getSupportedThinkingLevels(model as any);
+      expect(supported).toEqual(["low", "medium", "xhigh"]);
+    });
+
+    it("automatically populates thinkingLevelMap when discovered with supports_reasoning", async () => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = input instanceof URL ? input.toString() : String(input);
+        if (url.endsWith("/model/info")) {
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  model_name: "test-auto-map",
+                  model_info: {
+                    mode: "chat",
+                    supports_reasoning: true,
+                    reasoning_effort_levels: ["low", "medium", "xhigh", "none"],
+                  },
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        throw new Error(`unexpected URL: ${url}`);
+      });
+
+      const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+      expect(result.models[0]?.thinkingLevelMap).toEqual({
+        off: "none",
+        minimal: null,
+        low: "low",
+        medium: "medium",
+        high: null,
+        xhigh: "xhigh",
+      });
+      vi.restoreAllMocks();
     });
   });
 });

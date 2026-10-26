@@ -108,6 +108,8 @@ When a model declares `supports_reasoning: true` (or via `model_info.supports_re
 
 If a model restricts `reasoning_effort_levels` to a custom subset, the effort is rounded to the closest supported level according to the rounding direction.
 
+The extension also automatically generates Pi's `thinkingLevelMap` from `reasoning_effort_levels`. This activates `xhigh` in Pi's UI (which Pi hides by default) and filters out levels not supported by the model (e.g., hiding `minimal` and `high` when `reasoning_effort_levels` is `["low", "medium", "xhigh", "none"]`), leaving a clean 1:1 match in Pi's thinking level selector (`off`, `low`, `medium`, `xhigh`). Any explicit `thinkingLevelMap` configured in `models.json` overrides this automatic mapping.
+
 ### Models without `supports_reasoning`
 
 For models that do not declare reasoning support, the extension falls back to default budget mapping:

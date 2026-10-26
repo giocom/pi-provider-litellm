@@ -9,6 +9,7 @@ import type { ExtensionAPI, ExtensionContext, ProviderModelConfig } from "@earen
 import { fingerprint, isCacheValid, readCache, writeCache } from "./cache.js";
 import { setupLiteLLMCostTracking } from "./cost.js";
 import {
+  buildThinkingLevelMap,
   discoverModels,
   isGpt55Model,
   normalizeBaseUrl,
@@ -772,6 +773,14 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       }
       if (model.reasoning_effort_rounding !== undefined) {
         modelReasoningEffortRounding[model.id] = model.reasoning_effort_rounding;
+      }
+      const isSupportsReasoning = Boolean(
+        model.supports_reasoning ??
+          model.extraBody?.supports_reasoning ??
+          (model.reasoning_effort_levels !== undefined && model.reasoning_effort_levels.length > 0),
+      );
+      if (isSupportsReasoning && !model.thinkingLevelMap) {
+        model.thinkingLevelMap = buildThinkingLevelMap(model.reasoning_effort_levels);
       }
     }
     pi.registerProvider(PROVIDER_NAME, {

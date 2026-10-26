@@ -117,6 +117,34 @@ export function buildCompat(modelId: string): ProviderModelConfig["compat"] {
   return { supportsStore: false };
 }
 
+export function buildThinkingLevelMap(levels?: string[]): Record<string, string | null> {
+  const defaultLevels = ["low", "medium", "xhigh", "none"];
+  const list = (levels && levels.length > 0 ? levels : defaultLevels).map((l) => l.toLowerCase());
+  const supported = new Set(list);
+
+  const map: Record<string, string | null> = {};
+
+  // off / none
+  map.off = supported.has("none") || supported.has("off") ? "none" : null;
+
+  // minimal
+  map.minimal = supported.has("minimal") ? "minimal" : null;
+
+  // low
+  map.low = supported.has("low") ? "low" : null;
+
+  // medium
+  map.medium = supported.has("medium") ? "medium" : null;
+
+  // high
+  map.high = supported.has("high") ? "high" : null;
+
+  // xhigh (also check max / mx)
+  map.xhigh = supported.has("xhigh") || supported.has("max") || supported.has("mx") ? "xhigh" : null;
+
+  return map;
+}
+
 function toKnownProvider(provider: string | undefined): KnownProvider | undefined {
   if (!provider) return undefined;
   const normalized = provider.toLowerCase();
@@ -293,12 +321,6 @@ function mapFromModelInfo(entry: ModelInfoEntry): LiteLLMModelConfig | undefined
   if (info.mode && info.mode !== "chat") return undefined;
   const catalogModel = findCatalogModel(id);
   const extraBody = entry.litellm_params?.extra_body;
-  const supportsReasoning =
-    info.supports_reasoning !== undefined
-      ? info.supports_reasoning
-      : extraBody?.supports_reasoning !== undefined
-        ? Boolean(extraBody.supports_reasoning)
-        : (catalogModel?.reasoning ?? false);
   const reasoningEffortLevels =
     info.reasoning_effort_levels ??
     (Array.isArray(extraBody?.reasoning_effort_levels) ? (extraBody?.reasoning_effort_levels as string[]) : undefined);
@@ -307,10 +329,25 @@ function mapFromModelInfo(entry: ModelInfoEntry): LiteLLMModelConfig | undefined
     (typeof extraBody?.reasoning_effort_rounding === "string"
       ? (extraBody?.reasoning_effort_rounding as string)
       : undefined);
+  const hasExplicitReasoningConfig =
+    info.supports_reasoning !== undefined ||
+    extraBody?.supports_reasoning !== undefined ||
+    reasoningEffortLevels !== undefined;
+  const supportsReasoning =
+    info.supports_reasoning !== undefined
+      ? info.supports_reasoning
+      : extraBody?.supports_reasoning !== undefined
+        ? Boolean(extraBody.supports_reasoning)
+        : (catalogModel?.reasoning ?? false);
+  const thinkingLevelMap =
+    supportsReasoning && hasExplicitReasoningConfig
+      ? buildThinkingLevelMap(reasoningEffortLevels)
+      : catalogModel?.thinkingLevelMap;
   return {
     id,
     name: id,
     reasoning: supportsReasoning,
+    ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
     ...(info.supports_reasoning !== undefined
       ? { supports_reasoning: info.supports_reasoning }
       : extraBody?.supports_reasoning !== undefined
@@ -334,12 +371,6 @@ function mapFromHealthModelInfo(entry: ModelInfoEntry, fallbackId: string | unde
   const info = entry.model_info ?? {};
   const catalogModel = findCatalogModel(fallbackId);
   const extraBody = entry.litellm_params?.extra_body;
-  const supportsReasoning =
-    info.supports_reasoning !== undefined
-      ? info.supports_reasoning
-      : extraBody?.supports_reasoning !== undefined
-        ? Boolean(extraBody.supports_reasoning)
-        : (catalogModel?.reasoning ?? false);
   const reasoningEffortLevels =
     info.reasoning_effort_levels ??
     (Array.isArray(extraBody?.reasoning_effort_levels) ? (extraBody?.reasoning_effort_levels as string[]) : undefined);
@@ -348,10 +379,25 @@ function mapFromHealthModelInfo(entry: ModelInfoEntry, fallbackId: string | unde
     (typeof extraBody?.reasoning_effort_rounding === "string"
       ? (extraBody?.reasoning_effort_rounding as string)
       : undefined);
+  const hasExplicitReasoningConfig =
+    info.supports_reasoning !== undefined ||
+    extraBody?.supports_reasoning !== undefined ||
+    reasoningEffortLevels !== undefined;
+  const supportsReasoning =
+    info.supports_reasoning !== undefined
+      ? info.supports_reasoning
+      : extraBody?.supports_reasoning !== undefined
+        ? Boolean(extraBody.supports_reasoning)
+        : (catalogModel?.reasoning ?? false);
+  const thinkingLevelMap =
+    supportsReasoning && hasExplicitReasoningConfig
+      ? buildThinkingLevelMap(reasoningEffortLevels)
+      : catalogModel?.thinkingLevelMap;
   return {
     id: fallbackId,
     name: fallbackId,
     reasoning: supportsReasoning,
+    ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
     ...(info.supports_reasoning !== undefined
       ? { supports_reasoning: info.supports_reasoning }
       : extraBody?.supports_reasoning !== undefined
