@@ -11,17 +11,28 @@ const _require = createRequire(import.meta.url);
 let getModels: (provider: KnownProvider) => Model<Api>[] = () => [];
 let getProviders: () => KnownProvider[] = () => [];
 try {
-  const piAiEntry = _require.resolve("@earendil-works/pi-ai");
-  const compatPath = join(dirname(piAiEntry), "compat.js");
-  const compat = _require(compatPath) as {
-    getModels: (provider: KnownProvider) => Model<Api>[];
-    getProviders: () => KnownProvider[];
-  };
-  getModels = compat.getModels;
-  getProviders = compat.getProviders;
+  let compatPath: string | undefined;
+  try {
+    const piAiEntry = _require.resolve("@earendil-works/pi-ai");
+    compatPath = join(dirname(piAiEntry), "compat.js");
+  } catch {
+    const resolvedUrl = import.meta.resolve?.("@earendil-works/pi-ai");
+    if (resolvedUrl) {
+      compatPath = join(dirname(fileURLToPath(resolvedUrl)), "compat.js");
+    }
+  }
+  if (compatPath) {
+    const compat = _require(compatPath) as {
+      getModels: (provider: KnownProvider) => Model<Api>[];
+      getProviders: () => KnownProvider[];
+    };
+    getModels = compat.getModels;
+    getProviders = compat.getProviders;
+  }
 } catch {
   // Silent fallback: catalog enrichment unavailable (no crash)
 }
+
 import type {
   DiscoveryOptions,
   DiscoveryResult,
@@ -282,10 +293,31 @@ function mapFromModelInfo(entry: ModelInfoEntry): LiteLLMModelConfig | undefined
   if (info.mode && info.mode !== "chat") return undefined;
   const catalogModel = findCatalogModel(id);
   const extraBody = entry.litellm_params?.extra_body;
+  const supportsReasoning =
+    info.supports_reasoning !== undefined
+      ? info.supports_reasoning
+      : extraBody?.supports_reasoning !== undefined
+        ? Boolean(extraBody.supports_reasoning)
+        : (catalogModel?.reasoning ?? false);
+  const reasoningEffortLevels =
+    info.reasoning_effort_levels ??
+    (Array.isArray(extraBody?.reasoning_effort_levels) ? (extraBody?.reasoning_effort_levels as string[]) : undefined);
+  const reasoningEffortRounding =
+    info.reasoning_effort_rounding ??
+    (typeof extraBody?.reasoning_effort_rounding === "string"
+      ? (extraBody?.reasoning_effort_rounding as string)
+      : undefined);
   return {
     id,
     name: id,
-    reasoning: info.supports_reasoning ?? false,
+    reasoning: supportsReasoning,
+    ...(info.supports_reasoning !== undefined
+      ? { supports_reasoning: info.supports_reasoning }
+      : extraBody?.supports_reasoning !== undefined
+        ? { supports_reasoning: Boolean(extraBody.supports_reasoning) }
+        : {}),
+    ...(reasoningEffortLevels ? { reasoning_effort_levels: reasoningEffortLevels } : {}),
+    ...(reasoningEffortRounding ? { reasoning_effort_rounding: reasoningEffortRounding } : {}),
     input: info.supports_vision ? ["text", "image"] : ["text"],
     cost: mapModelInfoCost(info, catalogModel?.cost),
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
@@ -302,10 +334,31 @@ function mapFromHealthModelInfo(entry: ModelInfoEntry, fallbackId: string | unde
   const info = entry.model_info ?? {};
   const catalogModel = findCatalogModel(fallbackId);
   const extraBody = entry.litellm_params?.extra_body;
+  const supportsReasoning =
+    info.supports_reasoning !== undefined
+      ? info.supports_reasoning
+      : extraBody?.supports_reasoning !== undefined
+        ? Boolean(extraBody.supports_reasoning)
+        : (catalogModel?.reasoning ?? false);
+  const reasoningEffortLevels =
+    info.reasoning_effort_levels ??
+    (Array.isArray(extraBody?.reasoning_effort_levels) ? (extraBody?.reasoning_effort_levels as string[]) : undefined);
+  const reasoningEffortRounding =
+    info.reasoning_effort_rounding ??
+    (typeof extraBody?.reasoning_effort_rounding === "string"
+      ? (extraBody?.reasoning_effort_rounding as string)
+      : undefined);
   return {
     id: fallbackId,
     name: fallbackId,
-    reasoning: info.supports_reasoning ?? false,
+    reasoning: supportsReasoning,
+    ...(info.supports_reasoning !== undefined
+      ? { supports_reasoning: info.supports_reasoning }
+      : extraBody?.supports_reasoning !== undefined
+        ? { supports_reasoning: Boolean(extraBody.supports_reasoning) }
+        : {}),
+    ...(reasoningEffortLevels ? { reasoning_effort_levels: reasoningEffortLevels } : {}),
+    ...(reasoningEffortRounding ? { reasoning_effort_rounding: reasoningEffortRounding } : {}),
     input: info.supports_vision ? ["text", "image"] : ["text"],
     cost: mapModelInfoCost(info, catalogModel?.cost),
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,

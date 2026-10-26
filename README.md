@@ -82,7 +82,35 @@ Stored pi credentials for `litellm` take precedence over `LITELLM_API_KEY`; the 
 
 ## Thinking mode
 
-Pi's thinking mode is forwarded to LiteLLM on every request by mapping the selected level onto `extra_body`:
+Pi's thinking mode is forwarded to LiteLLM on every request by mapping the selected level onto `extra_body`.
+
+### Models with `supports_reasoning: true`
+
+When a model declares `supports_reasoning: true` (or via `model_info.supports_reasoning`), the extension reads `reasoning_effort_levels` (e.g. `["low", "medium", "xhigh", "none"]`) and `reasoning_effort_rounding` (`"up"` or `"down"`, defaulting to `"up"`):
+
+**Rounding Up (`reasoning_effort_rounding: "up"`, default):**
+
+| Pi thinking level | `extra_body.reasoning_effort` | `thinking_budget_tokens` | `reasoning` | `chat_template_kwargs.enable_thinking` |
+|---|---|---|---|---|
+| off / none | `none` | `0` | `false` | `false` |
+| minimal, low | `low` | `512` | `true` | `true` |
+| medium, high | `medium` | `2048` | `true` | `true` |
+| xhigh, max | `xhigh` | `8192` | `true` | `true` |
+
+**Rounding Down (`reasoning_effort_rounding: "down"`):**
+
+| Pi thinking level | `extra_body.reasoning_effort` | `thinking_budget_tokens` | `reasoning` | `chat_template_kwargs.enable_thinking` |
+|---|---|---|---|---|
+| off / none | `none` | `0` | `false` | `false` |
+| minimal, low, medium | `low` | `512` | `true` | `true` |
+| high, xhigh | `medium` | `2048` | `true` | `true` |
+| mx / max | `xhigh` | `8192` | `true` | `true` |
+
+If a model restricts `reasoning_effort_levels` to a custom subset, the effort is rounded to the closest supported level according to the rounding direction.
+
+### Models without `supports_reasoning`
+
+For models that do not declare reasoning support, the extension falls back to default budget mapping:
 
 | Pi thinking level | `reasoning` | `thinking_budget_tokens` | `chat_template_kwargs.enable_thinking` |
 |---|---|---|---|
@@ -92,7 +120,7 @@ Pi's thinking mode is forwarded to LiteLLM on every request by mapping the selec
 | medium | `true` | `4096` | `true` |
 | high | `true` | `8192` | `true` |
 
-`chat_template_kwargs.preserve_thinking` is always set to `true`. The mapping is applied on top of any `extra_body` merged from the LiteLLM model config, with request-level `extra_body` taking precedence. When the extension starts, it reads the current level via `pi.getThinkingLevel()` and also follows `thinking_level_select` events, so the level stays in sync whether it was restored from a saved session or changed mid-conversation. Requests that already carry `thinking`/`reasoning` fields are passed through untouched.
+`chat_template_kwargs.preserve_thinking` is preserved when set or defaulted to `true`. When the extension starts, it reads the current level via `pi.getThinkingLevel()` and also follows `thinking_level_select` events, so the level stays in sync whether it was restored from a saved session or changed mid-conversation. Requests that already carry `thinking`/`reasoning` fields are passed through untouched.
 
 ## Optional environment variables
 

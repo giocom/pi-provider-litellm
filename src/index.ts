@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Api, AssistantMessage, Model, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { fingerprint, isCacheValid, readCache, writeCache } from "./cache.js";
@@ -46,10 +47,20 @@ let _AuthStorage:
   | undefined;
 let _agentDir: string | undefined;
 try {
-  const mod = _piRequire("@earendil-works/pi-coding-agent") as Record<string, unknown>;
-  _AuthStorage = mod.AuthStorage as typeof _AuthStorage;
-  const g = mod.getAgentDir as (() => string) | undefined;
-  _agentDir = g?.();
+  let mod: Record<string, unknown> | undefined;
+  try {
+    mod = _piRequire("@earendil-works/pi-coding-agent") as Record<string, unknown>;
+  } catch {
+    const resolved = import.meta.resolve?.("@earendil-works/pi-coding-agent");
+    if (resolved) {
+      mod = _piRequire(fileURLToPath(resolved)) as Record<string, unknown>;
+    }
+  }
+  if (mod) {
+    _AuthStorage = mod.AuthStorage as typeof _AuthStorage;
+    const g = mod.getAgentDir as (() => string) | undefined;
+    _agentDir = g?.();
+  }
 } catch {
   // Peer dependency not resolvable — extension will fall back to env var
   // and /login litellm auth paths without crashing.
@@ -76,11 +87,16 @@ type ModelOverride = Partial<
   >
 > & {
   cost?: Partial<ProviderModelConfig["cost"]>;
+  supports_reasoning?: boolean;
+  reasoning_effort_levels?: string[];
+  reasoning_effort_rounding?: string;
 };
 
 type RefreshResult = { models: ProviderModelConfig[]; source: string };
 
 function piAgentDir(): string {
+  if (process.env.PI_CODING_AGENT_DIR) return process.env.PI_CODING_AGENT_DIR;
+  if (process.env.HOME && process.env.HOME !== homedir()) return process.env.HOME;
   return _agentDir ?? join(homedir(), ".pi", "agent");
 }
 
@@ -120,6 +136,9 @@ const MODEL_OVERRIDE_VALIDATORS: Record<keyof ModelOverride, (value: unknown) =>
   headers: (value) => isPlainObject(value) && Object.values(value).every((entry) => typeof entry === "string"),
   compat: isPlainObject,
   cost: (value) => isPlainObject(value) && Object.values(value).every((entry) => typeof entry === "number"),
+  supports_reasoning: (value) => typeof value === "boolean",
+  reasoning_effort_levels: (value) => Array.isArray(value) && value.every((entry) => typeof entry === "string"),
+  reasoning_effort_rounding: (value) => typeof value === "string",
 };
 
 function sanitizeModelOverride(modelId: string, raw: unknown): ModelOverride | undefined {
@@ -185,7 +204,7 @@ function mergeCompat(
 }
 
 function applyModelOverride(model: ProviderModelConfig, override: ModelOverride): ProviderModelConfig {
-  const next = { ...model };
+  const next = { ...model } as LiteLLMModelConfig;
   if (override.name !== undefined) next.name = override.name;
   if (override.reasoning !== undefined) next.reasoning = override.reasoning;
   if (override.thinkingLevelMap !== undefined) {
@@ -197,6 +216,10 @@ function applyModelOverride(model: ProviderModelConfig, override: ModelOverride)
   if (override.headers !== undefined) next.headers = override.headers;
   if (override.compat !== undefined) next.compat = mergeCompat(model.compat, override.compat);
   if (override.cost !== undefined) next.cost = { ...model.cost, ...override.cost };
+  if (override.supports_reasoning !== undefined) next.supports_reasoning = override.supports_reasoning;
+  if (override.reasoning_effort_levels !== undefined) next.reasoning_effort_levels = override.reasoning_effort_levels;
+  if (override.reasoning_effort_rounding !== undefined)
+    next.reasoning_effort_rounding = override.reasoning_effort_rounding;
   return next;
 }
 
@@ -706,6 +729,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   let updateCosts: (models: ProviderModelConfig[]) => void = () => undefined;
   const modelExtraBodies: Record<string, Record<string, unknown>> = {};
   const modelHasChatTemplateKwargs: Record<string, boolean> = {};
+  const modelSupportsReasoning: Record<string, boolean> = {};
+  const modelReasoningEffortLevels: Record<string, string[]> = {};
+  const modelReasoningEffortRounding: Record<string, string> = {};
 
   const oauth = {
     name: "LiteLLM",
@@ -728,12 +754,24 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   ): void {
     for (const key of Object.keys(modelExtraBodies)) delete modelExtraBodies[key];
     for (const key of Object.keys(modelHasChatTemplateKwargs)) delete modelHasChatTemplateKwargs[key];
+    for (const key of Object.keys(modelSupportsReasoning)) delete modelSupportsReasoning[key];
+    for (const key of Object.keys(modelReasoningEffortLevels)) delete modelReasoningEffortLevels[key];
+    for (const key of Object.keys(modelReasoningEffortRounding)) delete modelReasoningEffortRounding[key];
     for (const model of models as LiteLLMModelConfig[]) {
       if (model.extraBody && Object.keys(model.extraBody).length > 0) {
         modelExtraBodies[model.id] = model.extraBody;
       }
       if (model.extraBody?.chat_template_kwargs != null) {
         modelHasChatTemplateKwargs[model.id] = true;
+      }
+      if (model.supports_reasoning !== undefined) {
+        modelSupportsReasoning[model.id] = model.supports_reasoning;
+      }
+      if (model.reasoning_effort_levels !== undefined) {
+        modelReasoningEffortLevels[model.id] = model.reasoning_effort_levels;
+      }
+      if (model.reasoning_effort_rounding !== undefined) {
+        modelReasoningEffortRounding[model.id] = model.reasoning_effort_rounding;
       }
     }
     pi.registerProvider(PROVIDER_NAME, {
@@ -932,35 +970,151 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if (payload.thinking !== undefined || payload.reasoning !== undefined) {
       return prepareLiteLLMRequestPayload(payload, ctx.model?.id, sessionId);
     }
-    const thinkingBudgets: Record<string, number> = {
-      minimal: 512,
-      low: 1024,
-      medium: 4096,
-      high: 8192,
-    };
-    const modelExtraBody = modelExtraBodies[ctx.model?.id ?? ""];
+    const modelId = ctx.model?.id ?? "";
+    const modelConfig = ctx.model as
+      | (LiteLLMModelConfig & {
+          supports_reasoning?: boolean;
+          reasoning_effort_levels?: string[];
+          reasoning_effort_rounding?: string;
+        })
+      | undefined;
+    const modelExtraBody = modelExtraBodies[modelId] ?? modelConfig?.extraBody;
     const payloadExtraBody = (payload.extra_body as Record<string, unknown> | undefined) ?? {};
     const extraBody: Record<string, unknown> = { ...modelExtraBody, ...payloadExtraBody };
     // Pi restores the saved level without emitting thinking_level_select, so
     // fall back to the live value until a select event arrives.
-    const thinkingLevel = currentThinkingLevel ?? pi.getThinkingLevel();
-    if (thinkingLevel === "off") {
-      extraBody.reasoning = false;
-      extraBody.thinking_budget_tokens = 0;
-    } else if (thinkingBudgets[thinkingLevel]) {
-      extraBody.reasoning = true;
-      extraBody.thinking_budget_tokens = thinkingBudgets[thinkingLevel];
-    }
-    if (modelHasChatTemplateKwargs[ctx.model?.id ?? ""] ?? false) {
-      // Model config values win; the thinking-level mapping only fills fields the model did not set.
+    const rawThinkingLevel = currentThinkingLevel ?? pi.getThinkingLevel();
+
+    const supportsReasoning = Boolean(
+      modelSupportsReasoning[modelId] ??
+        modelConfig?.supports_reasoning ??
+        modelExtraBody?.supports_reasoning ??
+        payloadExtraBody?.supports_reasoning ??
+        (modelReasoningEffortLevels[modelId] !== undefined || modelConfig?.reasoning_effort_levels !== undefined),
+    );
+
+    if (supportsReasoning) {
+      const rounding = String(
+        modelReasoningEffortRounding[modelId] ??
+          modelConfig?.reasoning_effort_rounding ??
+          modelExtraBody?.reasoning_effort_rounding ??
+          payloadExtraBody?.reasoning_effort_rounding ??
+          "up",
+      ).toLowerCase();
+
+      const declaredLevels =
+        modelReasoningEffortLevels[modelId] ??
+        modelConfig?.reasoning_effort_levels ??
+        (Array.isArray(modelExtraBody?.reasoning_effort_levels)
+          ? (modelExtraBody.reasoning_effort_levels as string[])
+          : undefined) ??
+        (Array.isArray(payloadExtraBody?.reasoning_effort_levels)
+          ? (payloadExtraBody.reasoning_effort_levels as string[])
+          : undefined);
+
+      const thinkingLevel = (rawThinkingLevel ?? "off").toLowerCase();
+
+      let effort: "low" | "medium" | "xhigh" | "none";
+      if (thinkingLevel === "off" || thinkingLevel === "none") {
+        effort = "none";
+      } else if (rounding === "down") {
+        if (thinkingLevel === "minimal" || thinkingLevel === "low" || thinkingLevel === "medium") {
+          effort = "low";
+        } else if (thinkingLevel === "high" || thinkingLevel === "xhigh") {
+          effort = "medium";
+        } else if (thinkingLevel === "mx" || thinkingLevel === "max") {
+          effort = "xhigh";
+        } else {
+          effort = "none";
+        }
+      } else {
+        // "up" (default)
+        if (thinkingLevel === "minimal" || thinkingLevel === "low") {
+          effort = "low";
+        } else if (thinkingLevel === "medium" || thinkingLevel === "high") {
+          effort = "medium";
+        } else if (thinkingLevel === "xhigh" || thinkingLevel === "max" || thinkingLevel === "mx") {
+          effort = "xhigh";
+        } else {
+          effort = "none";
+        }
+      }
+
+      if (declaredLevels && declaredLevels.length > 0 && !declaredLevels.includes(effort)) {
+        const order: Array<"none" | "low" | "medium" | "xhigh"> = ["none", "low", "medium", "xhigh"];
+        const targetIdx = order.indexOf(effort);
+        if (rounding === "down") {
+          let selected = effort;
+          for (let i = targetIdx; i >= 0; i--) {
+            if (declaredLevels.includes(order[i])) {
+              selected = order[i];
+              break;
+            }
+          }
+          effort = selected;
+        } else {
+          let selected = effort;
+          for (let i = targetIdx; i < order.length; i++) {
+            if (declaredLevels.includes(order[i])) {
+              selected = order[i];
+              break;
+            }
+          }
+          effort = selected;
+        }
+      }
+
+      extraBody.reasoning_effort = effort;
+      if (effort === "none") {
+        extraBody.reasoning = false;
+        extraBody.thinking_budget_tokens = 0;
+      } else {
+        extraBody.reasoning = true;
+        if (effort === "low") {
+          extraBody.thinking_budget_tokens = 512;
+        } else if (effort === "medium") {
+          extraBody.thinking_budget_tokens = 2048;
+        } else if (effort === "xhigh") {
+          extraBody.thinking_budget_tokens = 8192;
+        }
+      }
+
       const configuredKwargs = (extraBody.chat_template_kwargs ?? modelExtraBody?.chat_template_kwargs) as
         | Record<string, unknown>
         | undefined;
       extraBody.chat_template_kwargs = {
-        enable_thinking: thinkingLevel !== "off",
-        preserve_thinking: true,
         ...configuredKwargs,
+        enable_thinking: effort !== "none",
       };
+
+      delete extraBody.supports_reasoning;
+      delete extraBody.reasoning_effort_levels;
+      delete extraBody.reasoning_effort_rounding;
+    } else {
+      const thinkingBudgets: Record<string, number> = {
+        minimal: 512,
+        low: 1024,
+        medium: 4096,
+        high: 8192,
+      };
+      if (rawThinkingLevel === "off") {
+        extraBody.reasoning = false;
+        extraBody.thinking_budget_tokens = 0;
+      } else if (thinkingBudgets[rawThinkingLevel]) {
+        extraBody.reasoning = true;
+        extraBody.thinking_budget_tokens = thinkingBudgets[rawThinkingLevel];
+      }
+      if (modelHasChatTemplateKwargs[modelId] ?? false) {
+        // Model config values win; the thinking-level mapping only fills fields the model did not set.
+        const configuredKwargs = (extraBody.chat_template_kwargs ?? modelExtraBody?.chat_template_kwargs) as
+          | Record<string, unknown>
+          | undefined;
+        extraBody.chat_template_kwargs = {
+          enable_thinking: rawThinkingLevel !== "off",
+          preserve_thinking: true,
+          ...configuredKwargs,
+        };
+      }
     }
     payload.extra_body = extraBody;
     return prepareLiteLLMRequestPayload(payload, ctx.model?.id, sessionId);

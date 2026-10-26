@@ -4,6 +4,9 @@ export type DiscoverySource = "model_info" | "models_list" | "health";
 
 export interface LiteLLMModelConfig extends ProviderModelConfig {
   extraBody?: Record<string, unknown>;
+  supports_reasoning?: boolean;
+  reasoning_effort_levels?: string[];
+  reasoning_effort_rounding?: string;
 }
 
 export interface CacheFile {
@@ -41,6 +44,8 @@ export interface ModelInfoEntry {
     max_tokens?: number;
     supports_reasoning?: boolean;
     supports_vision?: boolean;
+    reasoning_effort_levels?: string[];
+    reasoning_effort_rounding?: string;
   };
 }
 
