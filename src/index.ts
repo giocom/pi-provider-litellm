@@ -1083,6 +1083,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         | Record<string, unknown>
         | undefined;
       extraBody.chat_template_kwargs = {
+        preserve_thinking: true,
         ...configuredKwargs,
         enable_thinking: effort !== "none",
       };

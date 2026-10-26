@@ -151,6 +151,7 @@ describe("reasoning effort mode mapping", () => {
           thinking_budget_tokens: tc.expectedBudget,
           reasoning: tc.expectedReasoning,
           chat_template_kwargs: {
+            preserve_thinking: true,
             enable_thinking: tc.expectedEnableThinking,
           },
         });
@@ -258,6 +259,7 @@ describe("reasoning effort mode mapping", () => {
           thinking_budget_tokens: tc.expectedBudget,
           reasoning: tc.expectedReasoning,
           chat_template_kwargs: {
+            preserve_thinking: true,
             enable_thinking: tc.expectedEnableThinking,
           },
         });
@@ -330,7 +332,7 @@ describe("reasoning effort mode mapping", () => {
       reasoning_effort: "none",
       thinking_budget_tokens: 0,
       reasoning: false,
-      chat_template_kwargs: { enable_thinking: false },
+      chat_template_kwargs: { preserve_thinking: true, enable_thinking: false },
     });
 
     // Select "high"
@@ -342,7 +344,7 @@ describe("reasoning effort mode mapping", () => {
       reasoning_effort: "medium",
       thinking_budget_tokens: 2048,
       reasoning: true,
-      chat_template_kwargs: { enable_thinking: true },
+      chat_template_kwargs: { preserve_thinking: true, enable_thinking: true },
     });
 
     // Select "xhigh"
@@ -354,7 +356,7 @@ describe("reasoning effort mode mapping", () => {
       reasoning_effort: "xhigh",
       thinking_budget_tokens: 8192,
       reasoning: true,
-      chat_template_kwargs: { enable_thinking: true },
+      chat_template_kwargs: { preserve_thinking: true, enable_thinking: true },
     });
   });
 
@@ -407,7 +409,7 @@ describe("reasoning effort mode mapping", () => {
       reasoning_effort: "medium",
       thinking_budget_tokens: 2048,
       reasoning: true,
-      chat_template_kwargs: { enable_thinking: true },
+      chat_template_kwargs: { preserve_thinking: true, enable_thinking: true },
     });
   });
 
@@ -444,7 +446,7 @@ describe("reasoning effort mode mapping", () => {
       reasoning_effort: "xhigh",
       thinking_budget_tokens: 8192,
       reasoning: true,
-      chat_template_kwargs: { enable_thinking: true },
+      chat_template_kwargs: { preserve_thinking: true, enable_thinking: true },
     });
 
     // High with rounding down when medium is unavailable -> high maps to medium, which rounds down to low (512)
@@ -457,7 +459,44 @@ describe("reasoning effort mode mapping", () => {
       reasoning_effort: "low",
       thinking_budget_tokens: 512,
       reasoning: true,
-      chat_template_kwargs: { enable_thinking: true },
+      chat_template_kwargs: { preserve_thinking: true, enable_thinking: true },
+    });
+  });
+
+  it("allows overriding preserve_thinking if configured explicitly in extraBody", async () => {
+    const pi = createTestPi("medium");
+    await extension(pi as any);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+
+    const model = createModelConfig({
+      id: "test-override-preserve-thinking",
+      supports_reasoning: true,
+      reasoning_effort_levels: ["low", "medium", "xhigh", "none"],
+      reasoning_effort_rounding: "up",
+      extraBody: {
+        chat_template_kwargs: {
+          preserve_thinking: false,
+        },
+      },
+    });
+
+    pi.registerProvider("litellm", {
+      baseUrl: "http://127.0.0.1:4000/v1",
+      models: [model],
+    });
+
+    const payload: Record<string, unknown> = { messages: [] };
+    beforeRequest?.({ payload }, { model: { provider: "litellm", ...model } });
+
+    expect(payload.extra_body).toEqual({
+      reasoning_effort: "medium",
+      thinking_budget_tokens: 2048,
+      reasoning: true,
+      chat_template_kwargs: {
+        preserve_thinking: false,
+        enable_thinking: true,
+      },
     });
   });
 });
